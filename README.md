@@ -1,8 +1,6 @@
 ## Usage
 
 
-
-
 ```
 import 'package:memory_checker/memory_checker.dart';
 
