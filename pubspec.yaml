@@ -7,17 +7,16 @@ homepage: https://github.com/asjqkkkk/memory_checker
 
 environment:
   sdk: ">=2.7.0 <3.0.0"
-  flutter: ">=1.17.0"
 
 dependencies:
   flutter:
     sdk: flutter
 
+  isolate: ^2.0.3
+  vm_service: ^5.5.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
-
-  isolate: ^2.0.3
-  vm_service: ^5.5.0
 
 flutter:

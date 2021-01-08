@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 
 import 'all_pages.dart';
-import 'all_pages.dart';
-import 'all_pages.dart';
 
 class HomePage extends StatefulWidget {
   @override

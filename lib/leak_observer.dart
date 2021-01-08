@@ -11,14 +11,21 @@ class LeakObserver extends NavigatorObserver {
   LeakObserver({this.extraCheckTargets, this.filterCheckTargets});
 
   @override
-  void didPop(Route<dynamic> route, Route<dynamic> previousRoute) => doCheck(route, previousRoute);
+  void didPop(Route<dynamic> route, Route<dynamic> previousRoute) => _doCheck(route, previousRoute);
 
 
   @override
-  void didReplace({Route<dynamic> newRoute, Route<dynamic> oldRoute}) => doCheck(newRoute, oldRoute);
+  void didReplace({Route<dynamic> newRoute, Route<dynamic> oldRoute}) => _doCheck(newRoute, oldRoute);
 
 
   @override
-  void didRemove(Route<dynamic> route, Route<dynamic> previousRoute) => doCheck(route, previousRoute);
+  void didRemove(Route<dynamic> route, Route<dynamic> previousRoute) => _doCheck(route, previousRoute);
 
+  Future<bool> get enableCheck => Future.value(true);
+
+  void _doCheck(Route<dynamic> route, Route<dynamic> previousRoute) async{
+    final enableCheck = await this.enableCheck;
+    if(!enableCheck) return;
+    doCheck(route, previousRoute, navigator);
+  }
 }

@@ -10,7 +10,7 @@ import 'iso_pool.dart';
 import 'ui/all.dart';
 
 
-void doCheck(Route<dynamic> route, Route<dynamic> previousRoute, {Set<String> extraCheckTargets, Set<String> filterCheckTargets, NavigatorState navigator}){
+void doCheck(Route<dynamic> route, Route<dynamic> previousRoute, NavigatorState navigator, {Set<String> extraCheckTargets, Set<String> filterCheckTargets}){
   String pageName = '';
   String extraWidgetName = '';
   bool isStateful = false;
@@ -237,7 +237,7 @@ Future<MemoryInfo> getLeakObjects(
         final typeClass = field.declaredType.typeClass;
         final isBaseType = filterSet.contains(typeClass.name);
         if (isBaseType) return;
-        if (typeClass is! vs.Class) debugPrint('typeClass:$typeClass');
+        // if (typeClass is! vs.Class) debugPrint('typeClass:$typeClass');
         final vs.Class fieldClass =
             await service.getObject(iso.id, typeClass.id);
         final vs.InstanceSet fieldIns =
@@ -248,13 +248,6 @@ Future<MemoryInfo> getLeakObjects(
           needRecord = true;
           LeakInfo fieldLeakInfo = LeakInfo(fieldIns, fieldClass);
           children.add(fieldLeakInfo);
-          // await Future.forEach<vs.ObjRef>(fieldIns.instances, (fieIns) async {
-          //   if(fieIns is vs.InstanceRef){
-          //     final fieldClaRef = await service.getObject(iso.id, fieIns.id);
-          //     LeakInfo fieldLeakInfo = LeakInfo(fieldIns, typeClass);
-          //     children.add(fieldLeakInfo);
-          //   }
-          // });
         }
       });
     if (needRecord) resultMap[cla.name] = parentLeakInfo;
@@ -286,7 +279,7 @@ Future<List<RetainObjInfo>> getRetainingPath(RetainingInfo retainingInfo) async{
     final errorRetainObjInfo = RetainObjInfo();
     errorRetainObjInfo.index = 0;
     errorRetainObjInfo.details = [];
-    errorRetainObjInfo.retainedObj = e.toString();
+    errorRetainObjInfo.retainedObj = 'ERROR:  ${e.toString()}';
     errorRetainObjInfo.retainedBy = '';
     return [errorRetainObjInfo];
   }
@@ -367,9 +360,11 @@ Future<List<RetainObjInfo>> _getRetainingPath(RetainingInfo retainingInfo) async
             String valueString = '';
             if(field.value == null) valueString = '= null';
             else {
-              final value = field.value as vs.InstanceRef;
-              valueString = value.valueAsString ?? value.classRef.name;
-              valueString = '= $valueString';
+              if(field.value is vs.InstanceRef){
+                final value = field.value as vs.InstanceRef;
+                valueString = value.valueAsString ?? value.classRef.name;
+                valueString = '= $valueString';
+              } else valueString = field.value.runtimeType.toString();
             }
             final showText = finalString + typeString + nameString + valueString;
             retainObjInfo.details.add(showText);
@@ -379,9 +374,10 @@ Future<List<RetainObjInfo>> _getRetainingPath(RetainingInfo retainingInfo) async
           for (var i = 0; i < (elements?.length ?? 0); ++i) {
             var element = elements[i];
             if(element == null) break;
-            final ele = element as vs.InstanceRef;
-            final name = ele.classRef.name;
-            retainObjInfo.details.add(name);
+            if(element is vs.InstanceRef){
+              final name = element.classRef.name;
+              retainObjInfo.details.add(name);
+            } else retainObjInfo.details.add(element.runtimeType.toString());
           }
         }
         break;

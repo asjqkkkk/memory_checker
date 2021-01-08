@@ -8,7 +8,7 @@ class DraggableButton extends StatefulWidget {
   final FutureController futureController;
 
   const DraggableButton(
-      {Key key, this.size = 40.0, this.onTap, this.futureController})
+      {Key key, this.size = 50.0, this.onTap, this.futureController})
       : super(key: key);
 
   @override
