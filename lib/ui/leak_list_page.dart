@@ -3,30 +3,57 @@ import 'package:flutter/material.dart';
 import '../checker_util.dart';
 import 'leak_info_page.dart';
 
-class LeakListPage extends StatelessWidget {
-  final MemoryInfo memoryInfo;
+class LeakListPage extends StatefulWidget {
 
-  const LeakListPage({Key key, @required this.memoryInfo}) : super(key: key);
+  const LeakListPage({Key key}) : super(key: key);
+
+  @override
+  _LeakListPageState createState() => _LeakListPageState();
+}
+
+class _LeakListPageState extends State<LeakListPage> {
+
+  MemoryInfo _memoryInfo;
+
+
+  @override
+  void initState() {
+    IsoUtil().startCheck().then((value){
+      this._memoryInfo = value.memoryInfo;
+      refresh();
+    });
+    super.initState();
+  }
+
 
   @override
   Widget build(BuildContext context) {
-    final memoryList = memoryInfo.leakMaps?.keys?.toList() ?? [];
 
     return Scaffold(
       appBar: AppBar(
         title: Text('Leak Instance List'),
       ),
-      body: Container(
-        child: ListView.builder(
-          itemBuilder: (ctx, index) {
-            final curKey = memoryList[index];
-            final curLeakInfo = memoryInfo.leakMaps[curKey];
-            return buildLeakItem(curLeakInfo, context);
-          },
-          itemCount: memoryList.length,
-        ),
+      body: buildBody(),
+    );
+  }
+
+  Widget buildBody(){
+    if(_memoryInfo == null) return Center(child: CircularProgressIndicator(),);
+    final memoryList = _memoryInfo.leakMaps.keys.toList();
+    return Container(
+      child: ListView.builder(
+        itemBuilder: (ctx, index) {
+          final curKey = memoryList[index];
+          final curLeakInfo = _memoryInfo.leakMaps[curKey];
+          return buildLeakItem(curLeakInfo, context);
+        },
+        itemCount: memoryList.length,
       ),
     );
+  }
+
+  void refresh(){
+    if(mounted) setState(() {});
   }
 
   Widget buildLeakItem(LeakInfo leakInfo, BuildContext context) {
@@ -145,3 +172,4 @@ class LeakListPage extends StatelessWidget {
         builder: (ctx) => LeakInsList(leakInfo: leakInfo)));
   }
 }
+

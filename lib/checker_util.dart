@@ -9,14 +9,16 @@ import 'dart:developer';
 import 'iso_pool.dart';
 import 'ui/all.dart';
 
-
-void doCheck(Route<dynamic> route, Route<dynamic> previousRoute, NavigatorState navigator, {Set<String> extraCheckTargets, Set<String> filterCheckTargets}){
+void doCheck(Route<dynamic> route, Route<dynamic> previousRoute,
+    NavigatorState navigator,
+    {Set<TargetWidget> extraCheckTargets, Set<String> filterCheckTargets}) {
+  if (!canCheckMemory) return;
   String pageName = '';
   String extraWidgetName = '';
   bool isStateful = false;
   BuildContext context = navigator.context;
   final overlay = navigator.overlay;
-  switch(route.runtimeType){
+  switch (route.runtimeType) {
     case MaterialPageRoute:
       final r = route as MaterialPageRoute;
       Widget widget = r.builder.call(context);
@@ -32,8 +34,9 @@ void doCheck(Route<dynamic> route, Route<dynamic> previousRoute, NavigatorState 
       widget = null;
       break;
     default:
-      if(route is PageRoute){
-        Widget widget = route.buildPage(context, ProxyAnimation(), ProxyAnimation());
+      if (route is PageRoute) {
+        Widget widget =
+            route.buildPage(context, ProxyAnimation(), ProxyAnimation());
         extraWidgetName = widget.toString();
         isStateful = widget is StatefulWidget;
         widget = null;
@@ -43,14 +46,14 @@ void doCheck(Route<dynamic> route, Route<dynamic> previousRoute, NavigatorState 
 
   final canCheck = pageName.isNotEmpty || extraWidgetName.isNotEmpty;
   if (!canCheck) return;
+  final checkName = pageName.isEmpty ? extraWidgetName : pageName;
 
   final extraTargets = extraCheckTargets ?? {};
-  extraTargets.add(extraWidgetName);
+  extraTargets.add(TargetWidget(checkName, isStateful: isStateful));
 
-  _IsoUtil().startCheck(pageName, isStateful, extraTargets: extraTargets).then((value) {
-    bool needShowWater = value?.memoryInfo != _memoryInfo;
-    _memoryInfo = value.memoryInfo;
-    _mainIsoRef = value.mainIsoId;
+  IsoUtil()
+      .startCheckWithNotify(pageName, isStateful, extraTargets: extraTargets)
+      .then((value) {
     final util = OverlayUtil.getInstance();
     final controller = FutureController();
     _waterController ??= FutureController();
@@ -59,38 +62,64 @@ void doCheck(Route<dynamic> route, Route<dynamic> previousRoute, NavigatorState 
           futureController: controller,
           child: DraggableButton(
             futureController: _waterController,
-            onTap: () async{
+            onTap: () async {
               await controller.onCall();
               util.hide();
+              canCheckMemory = false;
               Navigator.of(context)
-                  .push(MaterialPageRoute(builder: (ctx) => LeakListPage(memoryInfo: _memoryInfo)))
-                  .then((value) =>  util.reshow(overlay));
+                  .push(MaterialPageRoute(
+                      builder: (ctx) => LeakListPage()))
+                  .then((value) {
+                util.reshow(overlay);
+                canCheckMemory = true;
+              });
             },
           ),
         ),
         overlayState: overlay);
-    if(needShowWater) _waterController.onCall();
+    if (value.needRefresh) _waterController.onCall();
   });
+
+
 }
 
-MemoryInfo _memoryInfo;
 String _mainIsoRef;
 FutureController _waterController;
+TargetInfo _targetInfo;
+bool canCheckMemory = true;
 
-class _IsoUtil {
-  static final _IsoUtil _instance = _IsoUtil._internal();
+class IsoUtil {
+  static final IsoUtil _instance = IsoUtil._internal();
 
-  factory _IsoUtil() {
+  factory IsoUtil() {
     return _instance;
   }
 
-  _IsoUtil._internal();
+  IsoUtil._internal();
 
-  Future<ResultInfo> startCheck(String pageName, bool isStateful,{Set<String> extraTargets}) async {
-    final leakedTargets = _memoryInfo?.leakMaps?.keys?.toSet() ?? {};
-    if(extraTargets != null) leakedTargets.addAll(extraTargets);
+  Future<ResultInfo> startCheck() async {
     final result = await IsoPool()
-        .start(checkMemory, CheckInfo(pageName, isStateful, leakedTargets));
+        .start(checkMemory, CheckInfo(_targetInfo._targetMap));
+    _mainIsoRef = result.mainIsoId;
+    return result;
+  }
+
+  Future<NotifyResult> startCheckWithNotify(String pageName, bool isStateful,
+      {Set<TargetWidget> extraTargets}) async {
+    final Map<String, TargetWidget> targetMap = {};
+    extraTargets.forEach((element) {
+      targetMap[element.targetName] = element;
+    });
+    if (_targetInfo == null) _targetInfo = TargetInfo(targetMap);
+    targetMap.forEach((key, value) {
+      final oldEle = _targetInfo._targetMap[key];
+      if(oldEle != null) targetMap[key] = oldEle;
+    });
+    final result =
+        await IsoPool().start(checkWithNotify, CheckNotifyInfo(targetMap));
+    result.targetMap.forEach((key, value) {
+      _targetInfo._targetMap[key] = value;
+    });
     return result;
   }
 }
@@ -118,33 +147,60 @@ Future<ResultInfo> checkMemory(CheckInfo checkInfo) async {
 
   final allocate = await startAllocate(vmInfo);
 
-  final emptyTarget = getAllocatedIns(checkInfo, allocate);
+  getAllocatedIns(checkInfo, allocate);
 
   final MemoryInfo memoryInfo = await getLeakObjects(targetClasses, vmInfo);
 
-  filterAllocatedIns(memoryInfo, emptyTarget);
 
   final result = ResultInfo(memoryInfo, mainIsoRef.id);
 
   return result;
 }
 
-void filterAllocatedIns(MemoryInfo memoryInfo, Set<String> emptyTarget) {
-  memoryInfo.leakMaps.removeWhere((key, value) => emptyTarget.contains(key) && !value.hasChildren);
+Future<NotifyResult> checkWithNotify(CheckNotifyInfo checkNotifyInfo) async {
+  final vmService = await getService();
+  final vm = await vmService.getVM();
+
+  final isoGroup = vm.isolates;
+  final mainIsoRef = await traverseIsolates(isoGroup);
+  if (mainIsoRef == null) throw Exception('Error: not fount main isolate');
+
+  final allocationProfile =
+      await vmService.getAllocationProfile(mainIsoRef.id, gc: true);
+  final Map<String, TargetWidget> targetMap = Map.of(checkNotifyInfo.targetMap);
+
+  bool needRefresh = false;
+  for (final mem in allocationProfile.members) {
+    final name = mem.classRef.name;
+    final count = mem.instancesCurrent;
+    if (targetMap[name] != null) {
+      final cur = targetMap[name];
+      if (cur.existCount != count) {
+        needRefresh = true;
+        targetMap[name] = TargetWidget(cur.targetName,
+            isStateful: cur.isStateful, existCount: count);
+      }
+    }
+  }
+  return NotifyResult(needRefresh, targetMap);
 }
 
-Set<String> getAllocatedIns(
+Map<String, TargetWidget> getAllocatedIns(
     CheckInfo checkInfo, vs.AllocationProfile allocate) {
-  final leakedTargets = checkInfo.leakedTargets;
-  final Set<String> emptyTarget = {};
+  final leakedTargets = checkInfo.targetMap;
+  final Map<String, TargetWidget> resultMap = {};
   if (leakedTargets.isNotEmpty)
     allocate.members.forEach((mem) {
       final name = mem.classRef.name;
-      if (leakedTargets.contains(name) && mem.instancesCurrent < 1) {
-        emptyTarget.add(name);
+      final count = mem.instancesCurrent;
+      final cur = leakedTargets[name];
+      if (cur != null && count > 0) {
+        resultMap[name] = TargetWidget(cur.targetName,
+            isStateful: cur.isStateful, existCount: count);
+        }
       }
-    });
-  return emptyTarget;
+    );
+  return resultMap;
 }
 
 Future<vs.VmService> getService() async {
@@ -188,9 +244,9 @@ Future<List<LeakTarget>> traverseLibs(
     List<vs.LibraryRef> libs, CommonInfo commonInfo) async {
   final service = commonInfo.vmInfo.service;
   final iso = commonInfo.vmInfo.mainIso;
-  final pageName = commonInfo.checkInfo.pageName;
-  final isStateful = commonInfo.checkInfo.isStateful;
-  final leakedTargets = commonInfo.checkInfo.leakedTargets;
+  final leakedTargets = commonInfo.checkInfo.targetMap;
+
+  final stateSet = leakedTargets.keys.map((e) => 'State<$e>').toSet();
 
   List<LeakTarget> result = [];
   await Future.forEach<vs.LibraryRef>(libs, (lib) async {
@@ -198,9 +254,10 @@ Future<List<LeakTarget>> traverseLibs(
     final classes = obj.classes ?? [];
     await Future.forEach<vs.ClassRef>(classes, (cla) async {
       final vs.Class obj = await service.getObject(iso.id, cla.id);
-      final isState = isStateful && obj.superType.name == 'State<$pageName>';
-      final isTargetPage = obj.name == pageName;
-      final needCheck = leakedTargets.contains(obj.name);
+      final curWidget = leakedTargets[obj.name];
+      final needCheck = curWidget != null;
+      final isState = stateSet.contains(obj.superType.name);
+      final isTargetPage = obj.name == curWidget?.targetName;
       final isTarget = isState || isTargetPage || needCheck;
       if (isTarget) result.add(LeakTarget(isState, obj));
     });
@@ -255,7 +312,7 @@ Future<MemoryInfo> getLeakObjects(
   return memoryInfo;
 }
 
-class RetainingInfo{
+class RetainingInfo {
   final String targetId;
   String mainIsoRef;
   final int limit;
@@ -263,19 +320,19 @@ class RetainingInfo{
   RetainingInfo(this.targetId, {this.limit = 100});
 }
 
-class RetainObjInfo{
+class RetainObjInfo {
   String retainedBy;
   String retainedObj;
   int index;
   List<String> details = [];
 }
 
-Future<List<RetainObjInfo>> getRetainingPath(RetainingInfo retainingInfo) async{
+Future<List<RetainObjInfo>> getRetainingPath(
+    RetainingInfo retainingInfo) async {
   retainingInfo.mainIsoRef = _mainIsoRef;
-  try{
-    return await IsoPool()
-        .start(_getRetainingPath, retainingInfo);
-  } catch(e){
+  try {
+    return await IsoPool().start(_getRetainingPath, retainingInfo);
+  } catch (e) {
     final errorRetainObjInfo = RetainObjInfo();
     errorRetainObjInfo.index = 0;
     errorRetainObjInfo.details = [];
@@ -285,18 +342,21 @@ Future<List<RetainObjInfo>> getRetainingPath(RetainingInfo retainingInfo) async{
   }
 }
 
-Future<List<RetainObjInfo>> _getRetainingPath(RetainingInfo retainingInfo) async{
+Future<List<RetainObjInfo>> _getRetainingPath(
+    RetainingInfo retainingInfo) async {
   final service = await getService();
   final isoId = retainingInfo.mainIsoRef;
-  final retainPath = await service.getRetainingPath(isoId, retainingInfo.targetId, retainingInfo.limit);
+  final retainPath = await service.getRetainingPath(
+      isoId, retainingInfo.targetId, retainingInfo.limit);
   List<RetainObjInfo> result = [];
   int index = 0;
-  await Future.forEach<vs.RetainingObject>(retainPath.elements, (element) async{
+  await Future.forEach<vs.RetainingObject>(retainPath.elements,
+      (element) async {
     final value = element.value;
     final retainObjInfo = RetainObjInfo();
     result.add(retainObjInfo);
     retainObjInfo.index = index;
-    switch(value.runtimeType){
+    switch (value.runtimeType) {
       case vs.ContextRef:
         final v = value as vs.ContextRef;
         final length = v.length;
@@ -316,21 +376,22 @@ Future<List<RetainObjInfo>> _getRetainingPath(RetainingInfo retainingInfo) async
         break;
     }
 
-    final obj =  await service.getObject(isoId, value.id);
-    switch(obj.runtimeType){
+    final obj = await service.getObject(isoId, value.id);
+    switch (obj.runtimeType) {
       case vs.Context:
         final o = obj as vs.Context;
         for (var i = 0; i < o.variables.length; ++i) {
           var element = o.variables[i];
           final v = element.value;
-          if(v is vs.InstanceRef){
+          if (v is vs.InstanceRef) {
             retainObjInfo.details.add('${v.classRef.name}');
-          } else if(v is vs.ContextRef){
+          } else if (v is vs.ContextRef) {
             final length = v.length;
             final lengthString = length == null ? '' : '($length)';
             retainObjInfo.details.add('Context' + lengthString);
-          } else debugPrint('UnCatch Variables Type :$v');
-          if(i >= 100){
+          } else
+            debugPrint('UnCatch Variables Type :$v');
+          if (i >= 100) {
             retainObjInfo.details.add('MORE THAN 100, HIDE OTHERS');
             return;
           }
@@ -339,13 +400,16 @@ Future<List<RetainObjInfo>> _getRetainingPath(RetainingInfo retainingInfo) async
       case vs.Instance:
         final o = obj as vs.Instance;
         bool isClosure = o.kind == 'Closure';
-        if(isClosure){
+        if (isClosure) {
           final closure = o.closureFunction;
-          final vs.Func func = await service.getObject(isoId, closure?.id ?? '');
+          final vs.Func func =
+              await service.getObject(isoId, closure?.id ?? '');
           final location = func.location;
-          final vs.Script script = await service.getObject(isoId, location.script.id);
+          final vs.Script script =
+              await service.getObject(isoId, location.script.id);
           final closureName = func.code.name.replaceAll('[Unoptimized]', '');
-          final source = script.source.substring(location.tokenPos, location.endTokenPos);
+          final source =
+              script.source.substring(location.tokenPos, location.endTokenPos);
           retainObjInfo.details.add('function = $closureName');
           retainObjInfo.details.add('code :');
           retainObjInfo.details.add(source);
@@ -355,29 +419,35 @@ Future<List<RetainObjInfo>> _getRetainingPath(RetainingInfo retainingInfo) async
             final decl = field.decl;
             final finalString = decl.isFinal ? 'final ' : '';
 
-            final typeString = (decl.declaredType.typeClass?.name ?? decl.declaredType.classRef.name) + ' ';
+            final typeString = (decl.declaredType.typeClass?.name ??
+                    decl.declaredType.classRef.name) +
+                ' ';
             final nameString = decl.name.toString() + ' ';
             String valueString = '';
-            if(field.value == null) valueString = '= null';
+            if (field.value == null)
+              valueString = '= null';
             else {
-              if(field.value is vs.InstanceRef){
+              if (field.value is vs.InstanceRef) {
                 final value = field.value as vs.InstanceRef;
                 valueString = value.valueAsString ?? value.classRef.name;
                 valueString = '= $valueString';
-              } else valueString = field.value.runtimeType.toString();
+              } else
+                valueString = field.value.runtimeType.toString();
             }
-            final showText = finalString + typeString + nameString + valueString;
+            final showText =
+                finalString + typeString + nameString + valueString;
             retainObjInfo.details.add(showText);
           });
 
           final elements = o.elements;
           for (var i = 0; i < (elements?.length ?? 0); ++i) {
             var element = elements[i];
-            if(element == null) break;
-            if(element is vs.InstanceRef){
+            if (element == null) break;
+            if (element is vs.InstanceRef) {
               final name = element.classRef.name;
               retainObjInfo.details.add(name);
-            } else retainObjInfo.details.add(element.runtimeType.toString());
+            } else
+              retainObjInfo.details.add(element.runtimeType.toString());
           }
         }
         break;
@@ -390,12 +460,12 @@ Future<List<RetainObjInfo>> _getRetainingPath(RetainingInfo retainingInfo) async
   return result;
 }
 
-Future<vs.InboundReferences> getInboundReferences(String targetId, {int limit = 100}) async{
+Future<vs.InboundReferences> getInboundReferences(String targetId,
+    {int limit = 100}) async {
   final service = await getService();
   final isoId = _mainIsoRef;
   return service.getInboundReferences(isoId, targetId, limit);
 }
-
 
 class MemoryInfo {
   final Map<String, LeakInfo> leakMaps;
@@ -404,18 +474,18 @@ class MemoryInfo {
 
   @override
   bool operator ==(Object other) {
-    if(other is! MemoryInfo) return false;
+    if (other is! MemoryInfo) return false;
     // ignore: test_types_in_equals
     final o = other as MemoryInfo;
-    if(leakMaps?.length != o?.leakMaps?.length) return false;
+    if (leakMaps?.length != o?.leakMaps?.length) return false;
     final set = leakMaps.keys.toSet();
     final oSet = o.leakMaps.keys.toSet();
-    if(!set.containsAll(oSet)) return false;
+    if (!set.containsAll(oSet)) return false;
     bool result = true;
     leakMaps.forEach((key, value) {
       final l = value.instanceObj.instances.length;
       final oL = o.leakMaps[key].instanceObj.instances.length;
-      if(l != oL) {
+      if (l != oL) {
         result = false;
         return;
       }
@@ -425,7 +495,6 @@ class MemoryInfo {
 
   @override
   int get hashCode => super.hashCode;
-
 }
 
 class LeakInfo {
@@ -441,11 +510,49 @@ class LeakInfo {
 }
 
 class CheckInfo {
-  String pageName;
-  bool isStateful;
-  Set<String> leakedTargets;
+  final Map<String, TargetWidget> targetMap;
 
-  CheckInfo(this.pageName, this.isStateful, this.leakedTargets);
+  CheckInfo(this.targetMap);
+}
+
+class CheckNotifyInfo {
+  final Map<String, TargetWidget> targetMap;
+
+  CheckNotifyInfo(this.targetMap);
+}
+
+class NotifyResult {
+  final bool needRefresh;
+  final Map<String, TargetWidget> targetMap;
+
+  NotifyResult(this.needRefresh, this.targetMap);
+}
+
+class TargetWidget {
+  final String targetName;
+  final bool isStateful;
+  final int existCount;
+
+  TargetWidget(this.targetName, {this.isStateful = false, this.existCount = 0});
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is TargetWidget &&
+          runtimeType == other.runtimeType &&
+          targetName == other.targetName &&
+          isStateful == other.isStateful &&
+          existCount == other.existCount;
+
+  @override
+  int get hashCode =>
+      targetName.hashCode ^ isStateful.hashCode ^ existCount.hashCode;
+}
+
+class TargetInfo {
+  final Map<String, TargetWidget> _targetMap;
+
+  TargetInfo(this._targetMap);
 }
 
 class LeakTarget {
@@ -485,14 +592,14 @@ final filterSet = {
   'Float64x2List',
 };
 
-class CommonInfo{
+class CommonInfo {
   final CheckInfo checkInfo;
   final VmInfo vmInfo;
 
   CommonInfo(this.checkInfo, this.vmInfo);
 }
 
-class ResultInfo{
+class ResultInfo {
   final MemoryInfo memoryInfo;
   final String mainIsoId;
 
@@ -500,7 +607,6 @@ class ResultInfo{
 }
 
 class VmInfo {
-
   String packageName;
 
   vs.VmService service;
