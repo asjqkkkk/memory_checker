@@ -11,7 +11,7 @@ import 'ui/all.dart';
 
 void doCheck(Route<dynamic> route, Route<dynamic> previousRoute,
     NavigatorState navigator,
-    {Set<TargetWidget> extraCheckTargets, Set<String> filterCheckTargets}) {
+    {Set<TargetWidget> extraCheckTargets, Set<TargetWidget> filterCheckTargets}) {
   if (!canCheckMemory) return;
   String pageName = '';
   String extraWidgetName = '';
@@ -79,8 +79,6 @@ void doCheck(Route<dynamic> route, Route<dynamic> previousRoute,
         overlayState: overlay);
     if (value.needRefresh) _waterController.onCall();
   });
-
-
 }
 
 String _mainIsoRef;
@@ -259,7 +257,13 @@ Future<List<LeakTarget>> traverseLibs(
       final isState = stateSet.contains(obj.superType.name);
       final isTargetPage = obj.name == curWidget?.targetName;
       final isTarget = isState || isTargetPage || needCheck;
-      if (isTarget) result.add(LeakTarget(isState, obj));
+      LeakTarget tar = LeakTarget(isState, obj);
+      if(isState && obj.subclasses.isNotEmpty){
+        final subClass = obj.subclasses.first;
+        final tarClass = await service.getObject(iso.id, subClass.id);
+        tar = LeakTarget(isState, tarClass);
+      }
+      if (isTarget) result.add(tar);
     });
   });
   return result;
@@ -281,183 +285,89 @@ Future<MemoryInfo> getLeakObjects(
     bool needRecord = false;
     final cla = target.targetClass;
     final vs.InstanceSet parentObj =
-        await service.getInstances(iso.id, cla.id, 100);
+        await service.getInstances(iso.id, cla.id, 1);
     final leakCount = parentObj.totalCount;
     final hasParentObj = leakCount > 0;
     needRecord = hasParentObj;
-    final fields = cla.fields;
     LeakInfo parentLeakInfo = LeakInfo(parentObj, cla);
-    List<LeakInfo> children = [];
-    parentLeakInfo.children = children;
-    if (target.isStateful)
-      await Future.forEach<vs.FieldRef>(fields, (field) async {
-        final typeClass = field.declaredType.typeClass;
-        final isBaseType = filterSet.contains(typeClass.name);
-        if (isBaseType) return;
-        // if (typeClass is! vs.Class) debugPrint('typeClass:$typeClass');
-        final vs.Class fieldClass =
-            await service.getObject(iso.id, typeClass.id);
-        final vs.InstanceSet fieldIns =
-            await service.getInstances(iso.id, fieldClass.id, 100);
-        final hasFieldObj = fieldIns.totalCount > 0;
-        if (!hasFieldObj && !hasParentObj) return;
-        if (hasFieldObj) {
-          needRecord = true;
-          LeakInfo fieldLeakInfo = LeakInfo(fieldIns, fieldClass);
-          children.add(fieldLeakInfo);
-        }
-      });
     if (needRecord) resultMap[cla.name] = parentLeakInfo;
   });
   return memoryInfo;
 }
 
-class RetainingInfo {
+Future<vs.InstanceSet> getInstances(
+    ObjectInfo objectInfo) async {
+  objectInfo.mainIsoRef = _mainIsoRef;
+  return await IsoPool().start(_getInstances, objectInfo);
+}
+
+Future<vs.InstanceSet> _getInstances(
+    ObjectInfo objectInfo) async {
+  final service = await getService();
+  final isoId = objectInfo.mainIsoRef;
+  return await service.getInstances(
+      isoId, objectInfo.targetId, objectInfo.limit);
+}
+
+class ObjectInfo {
   final String targetId;
   String mainIsoRef;
   final int limit;
 
-  RetainingInfo(this.targetId, {this.limit = 100});
+  ObjectInfo(this.targetId, {this.limit = 1});
 }
 
-class RetainObjInfo {
-  String retainedBy;
-  String retainedObj;
-  int index;
-  List<String> details = [];
+class RetainingObjInfo{
+  final vs.RetainingObject retainingObject;
+  String mainIsoRef;
+  RetainingObjInfo(this.retainingObject);
 }
 
-Future<List<RetainObjInfo>> getRetainingPath(
-    RetainingInfo retainingInfo) async {
+
+class AnalyzeObjectInfo {
+  final vs.Obj obj;
+  String mainIsoRef;
+  AnalyzeObjectInfo(this.obj);
+}
+
+Future<vs.Obj> getTargetObj(ObjectInfo objectInfo) async{
+  objectInfo.mainIsoRef = _mainIsoRef;
+  return await IsoPool().start(_getTargetObj, objectInfo);
+}
+
+Future<vs.Obj> _getTargetObj(ObjectInfo objectInfo) async{
+  final service = await getService();
+  final isoId = objectInfo.mainIsoRef;
+  final result = await service.getObject(isoId, objectInfo.targetId);
+  return result;
+}
+
+Future<vs.RetainingPath> getRetainingPath(
+    ObjectInfo retainingInfo) async {
   retainingInfo.mainIsoRef = _mainIsoRef;
-  try {
-    return await IsoPool().start(_getRetainingPath, retainingInfo);
-  } catch (e) {
-    final errorRetainObjInfo = RetainObjInfo();
-    errorRetainObjInfo.index = 0;
-    errorRetainObjInfo.details = [];
-    errorRetainObjInfo.retainedObj = 'ERROR:  ${e.toString()}';
-    errorRetainObjInfo.retainedBy = '';
-    return [errorRetainObjInfo];
-  }
+  return await IsoPool().start(_getRetainingPath, retainingInfo);
 }
 
-Future<List<RetainObjInfo>> _getRetainingPath(
-    RetainingInfo retainingInfo) async {
+Future<vs.RetainingPath> _getRetainingPath(
+    ObjectInfo retainingInfo) async {
   final service = await getService();
   final isoId = retainingInfo.mainIsoRef;
-  final retainPath = await service.getRetainingPath(
+  return await service.getRetainingPath(
       isoId, retainingInfo.targetId, retainingInfo.limit);
-  List<RetainObjInfo> result = [];
-  int index = 0;
-  await Future.forEach<vs.RetainingObject>(retainPath.elements,
-      (element) async {
-    final value = element.value;
-    final retainObjInfo = RetainObjInfo();
-    result.add(retainObjInfo);
-    retainObjInfo.index = index;
-    switch (value.runtimeType) {
-      case vs.ContextRef:
-        final v = value as vs.ContextRef;
-        final length = v.length;
-        final lengthString = length == null ? '' : '($length)';
-        retainObjInfo.retainedBy = element.parentField ?? 'offset';
-        retainObjInfo.retainedObj = 'Context' + lengthString;
-        break;
-      case vs.InstanceRef:
-        final v = value as vs.InstanceRef;
-        final length = v.length;
-        final lengthString = length == null ? '' : '($length)';
-        retainObjInfo.retainedBy = element.parentField ?? 'offset';
-        retainObjInfo.retainedObj = v.classRef.name + lengthString;
-        break;
-      default:
-        debugPrint('UnCatch Value Type :$value');
-        break;
-    }
+}
 
-    final obj = await service.getObject(isoId, value.id);
-    switch (obj.runtimeType) {
-      case vs.Context:
-        final o = obj as vs.Context;
-        for (var i = 0; i < o.variables.length; ++i) {
-          var element = o.variables[i];
-          final v = element.value;
-          if (v is vs.InstanceRef) {
-            retainObjInfo.details.add('${v.classRef.name}');
-          } else if (v is vs.ContextRef) {
-            final length = v.length;
-            final lengthString = length == null ? '' : '($length)';
-            retainObjInfo.details.add('Context' + lengthString);
-          } else
-            debugPrint('UnCatch Variables Type :$v');
-          if (i >= 100) {
-            retainObjInfo.details.add('MORE THAN 100, HIDE OTHERS');
-            return;
-          }
-        }
-        break;
-      case vs.Instance:
-        final o = obj as vs.Instance;
-        bool isClosure = o.kind == 'Closure';
-        if (isClosure) {
-          final closure = o.closureFunction;
-          final vs.Func func =
-              await service.getObject(isoId, closure?.id ?? '');
-          final location = func.location;
-          final vs.Script script =
-              await service.getObject(isoId, location.script.id);
-          final closureName = func.code.name.replaceAll('[Unoptimized]', '');
-          final source =
-              script.source.substring(location.tokenPos, location.endTokenPos);
-          retainObjInfo.details.add('function = $closureName');
-          retainObjInfo.details.add('code :');
-          retainObjInfo.details.add(source);
-        } else {
-          final fields = o.fields;
-          fields?.forEach((field) {
-            final decl = field.decl;
-            final finalString = decl.isFinal ? 'final ' : '';
+Future<vs.Obj> transRetainInfo(
+    RetainingObjInfo retainingObjInfo) async {
+  retainingObjInfo.mainIsoRef = _mainIsoRef;
+  return await IsoPool().start(_transformRetainObj, retainingObjInfo);
+}
 
-            final typeString = (decl.declaredType.typeClass?.name ??
-                    decl.declaredType.classRef.name) +
-                ' ';
-            final nameString = decl.name.toString() + ' ';
-            String valueString = '';
-            if (field.value == null)
-              valueString = '= null';
-            else {
-              if (field.value is vs.InstanceRef) {
-                final value = field.value as vs.InstanceRef;
-                valueString = value.valueAsString ?? value.classRef.name;
-                valueString = '= $valueString';
-              } else
-                valueString = field.value.runtimeType.toString();
-            }
-            final showText =
-                finalString + typeString + nameString + valueString;
-            retainObjInfo.details.add(showText);
-          });
 
-          final elements = o.elements;
-          for (var i = 0; i < (elements?.length ?? 0); ++i) {
-            var element = elements[i];
-            if (element == null) break;
-            if (element is vs.InstanceRef) {
-              final name = element.classRef.name;
-              retainObjInfo.details.add(name);
-            } else
-              retainObjInfo.details.add(element.runtimeType.toString());
-          }
-        }
-        break;
-      default:
-        debugPrint('UnCatch Object Type :$obj');
-        break;
-    }
-    index++;
-  });
-  return result;
+Future<vs.Obj> _transformRetainObj(RetainingObjInfo retainingObjInfo) async{
+  final service = await getService();
+  final isoId = retainingObjInfo.mainIsoRef;
+  final retainObj = retainingObjInfo.retainingObject;
+  return await service.getObject(isoId, retainObj.value.id);
 }
 
 Future<vs.InboundReferences> getInboundReferences(String targetId,
@@ -466,6 +376,128 @@ Future<vs.InboundReferences> getInboundReferences(String targetId,
   final isoId = _mainIsoRef;
   return service.getInboundReferences(isoId, targetId, limit);
 }
+
+Future<DetailInfo> analyzeObjInfo(AnalyzeObjectInfo obj) async{
+  obj.mainIsoRef = _mainIsoRef;
+  return await IsoPool().start(_analyzeObjInfo, obj);
+}
+
+Future<DetailInfo> _analyzeObjInfo(AnalyzeObjectInfo objectInfo) async{
+  final isoId = objectInfo.mainIsoRef;
+  final obj = objectInfo.obj;
+  DetailInfo detailInfo = DetailInfo(obj.id);
+  switch (obj.runtimeType) {
+    case vs.Context:
+      final o = obj as vs.Context;
+      for (var i = 0; i < o.variables.length; ++i) {
+        var element = o.variables[i];
+        final v = element.value;
+        final dlInfo = DetailInfo(v.id);
+        final List<SpanInfo> spanInfoList = [];
+        if (v is vs.InstanceRef) {
+          final spInfo = SpanInfo(v.classRef.name, blueStyle);
+          spanInfoList.add(spInfo);
+        } else if (v is vs.ContextRef) {
+          final length = v.length;
+          final lengthString = length == null ? '' : '($length)';
+          final spInfo = SpanInfo('Context' + lengthString, blueStyle);
+          spanInfoList.add(spInfo);
+        } else {
+          final errorText = 'UnCatch Variables Type :$v';
+          final spInfo = SpanInfo(errorText, errorStyle);
+          spanInfoList.add(spInfo);
+        }
+        detailInfo.children.add(SpanWithDetail(spanInfoList, dlInfo));
+        if (i >= 10) {
+          final spInfo = SpanInfo('Only support to show 10 items', errorStyle);
+          spanInfoList.add(spInfo);
+          break;
+        }
+      }
+      break;
+    case vs.Instance:
+      final o = obj as vs.Instance;
+      bool isClosure = o.kind == 'Closure';
+      if (isClosure) {
+        final closure = o.closureFunction;
+        final dlInfo = DetailInfo(closure.id);
+        final List<SpanInfo> spanInfoList = [];
+        spanInfoList.add(SpanInfo('closure = ${closure.name}', blueStyle));
+        detailInfo.children.add(SpanWithDetail(spanInfoList, dlInfo));
+      } else {
+        final fields = o.fields;
+        fields?.forEach((field) {
+          DetailInfo dlInfo = DetailInfo(null);
+          final List<SpanInfo> spanInfoList = [];
+          final dec = field.decl;
+          final finalString = dec.isFinal ? 'final ' : '';
+
+          final typeString = (dec.declaredType.typeClass?.name ??
+              dec.declaredType.classRef.name) +
+              ' ';
+          final nameString = dec.name.toString() + ' ';
+          String valueString = '';
+          if (field.value == null){
+            valueString = '= null';
+          } else {
+            if (field.value is vs.InstanceRef) {
+              final value = field.value as vs.InstanceRef;
+              valueString = value.valueAsString ?? value.classRef.name;
+              valueString = '= $valueString';
+              if(!filterSet.contains(value.kind)) dlInfo = DetailInfo(value.id);
+            } else
+              valueString = field.value.runtimeType.toString();
+          }
+          spanInfoList.add(SpanInfo(finalString, defaultStyle));
+          spanInfoList.add(SpanInfo(typeString, defaultStyle));
+          spanInfoList.add(SpanInfo(nameString, defaultStyle));
+          spanInfoList.add(SpanInfo(valueString, blueStyle));
+          detailInfo.children.add(SpanWithDetail(spanInfoList, dlInfo));
+        });
+
+        final elements = o.elements;
+        for (var i = 0; i < (elements?.length ?? 0); ++i) {
+          final List<SpanInfo> spanInfoList = [];
+          DetailInfo dlInfo = DetailInfo(null);
+          var element = elements[i];
+          if (element == null) break;
+          if (element is vs.InstanceRef) {
+            final name = element.classRef.name;
+            spanInfoList.add(SpanInfo(name, defaultStyle));
+            dlInfo = DetailInfo(element.id);
+          } else spanInfoList.add(SpanInfo(element.runtimeType.toString(), errorStyle));
+          detailInfo.children.add(SpanWithDetail(spanInfoList, dlInfo));
+          if (i >= 10) {
+            spanInfoList.add(SpanInfo('Only support to show 10 items', errorStyle));
+            break;
+          }
+        }
+      }
+
+      break;
+    case vs.Func:
+      final func = obj as vs.Func;
+      final dlInfo = DetailInfo(null);
+      final List<SpanInfo> spanInfoList = [];
+      final service = await getService();
+      final location = func.location;
+      final vs.Script script = await service.getObject(isoId, location.script.id);
+      final closureName = func.code.name.replaceAll('[Unoptimized]', '');
+      final source = script.source.substring(location.tokenPos, location.endTokenPos);
+      spanInfoList.add(SpanInfo('function = $closureName', defaultStyle));
+      spanInfoList.add(SpanInfo('code :', blueStyle));
+      spanInfoList.add(SpanInfo(source, defaultStyle));
+      detailInfo.children.add(SpanWithDetail(spanInfoList, dlInfo));
+      break;
+    default:
+      final errorText = 'UnCatch Object Type :${obj.toString()}';
+      debugPrint(errorText);
+      detailInfo.children.add(SpanWithDetail([SpanInfo(errorText, errorStyle)], DetailInfo(null)));
+      break;
+  }
+  return detailInfo;
+}
+
 
 class MemoryInfo {
   final Map<String, LeakInfo> leakMaps;
@@ -500,13 +532,11 @@ class MemoryInfo {
 class LeakInfo {
   final vs.InstanceSet instanceObj;
   final vs.Class claObj;
-  List<LeakInfo> children;
 
-  LeakInfo(this.instanceObj, this.claObj, {this.children});
+  LeakInfo(this.instanceObj, this.claObj);
 
   bool get hasInstance => (instanceObj?.totalCount ?? 0) > 0;
 
-  bool get hasChildren => children?.isNotEmpty ?? false;
 }
 
 class CheckInfo {
@@ -568,6 +598,7 @@ final filterSet = {
   'Map',
   'HashMap',
   'int',
+  'Int',
   'double',
   'float',
   'long',

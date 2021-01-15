@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../checker_util.dart';
-import 'leak_info_page.dart';
+import 'leak_instance_page.dart';
 
 class LeakListPage extends StatefulWidget {
 
@@ -110,7 +110,7 @@ class _LeakListPageState extends State<LeakListPage> {
                   ],
                 ),
               ),
-              buildChildLeakList(leakInfo.children, context)
+              // buildChildLeakList(leakInfo.children, context)
             ],
           ),
         ),

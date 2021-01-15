@@ -4,9 +4,9 @@ import 'checker_util.dart';
 
 class LeakObserver extends NavigatorObserver {
 
-  final Set<String> extraCheckTargets;
+  final Set<TargetWidget> extraCheckTargets;
 
-  final Set<String> filterCheckTargets;
+  final Set<TargetWidget> filterCheckTargets;
 
   LeakObserver({this.extraCheckTargets, this.filterCheckTargets});
 
@@ -26,6 +26,6 @@ class LeakObserver extends NavigatorObserver {
   void _doCheck(Route<dynamic> route, Route<dynamic> previousRoute) async{
     final enableCheck = await this.enableCheck;
     if(!enableCheck) return;
-    doCheck(route, previousRoute, navigator);
+    doCheck(route, previousRoute, navigator, extraCheckTargets: extraCheckTargets, filterCheckTargets: filterCheckTargets);
   }
 }
