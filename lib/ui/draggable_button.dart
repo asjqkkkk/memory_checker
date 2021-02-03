@@ -1,21 +1,22 @@
 import 'package:flutter/material.dart';
 
+import '../checker_util.dart';
 import 'animation_widgets.dart';
 
-class DraggableButton extends StatefulWidget {
+class DraggableButton<T> extends StatefulWidget {
   final double size;
   final VoidCallback onTap;
-  final FutureController futureController;
+  final FutureParamController<T> futureController;
 
   const DraggableButton(
       {Key key, this.size = 50.0, this.onTap, this.futureController})
       : super(key: key);
 
   @override
-  _DraggableButtonState createState() => _DraggableButtonState();
+  _DraggableButtonState<T> createState() => _DraggableButtonState<T>();
 }
 
-class _DraggableButtonState extends State<DraggableButton>
+class _DraggableButtonState<T> extends State<DraggableButton<T>>
     with SingleTickerProviderStateMixin {
   double _left, _top;
   Size _size;
@@ -23,6 +24,7 @@ class _DraggableButtonState extends State<DraggableButton>
   AnimationController _controller;
   Animation<double> _animation;
   double _radius = 0;
+  Color _radiusColor = Colors.grey.withOpacity(0.5);
 
   @override
   void initState() {
@@ -43,14 +45,35 @@ class _DraggableButtonState extends State<DraggableButton>
     super.dispose();
   }
 
-  Future forward() async {
+  Future forward(T t) async {
+    if (t is CompareType && (t == CompareType.same)) return;
+    if (t is CompareType) changeColor(t);
     _radius = 30;
     refresh();
     final result = await _controller.forward();
     _controller.reset();
     _radius = 0;
+    clearColor();
     refresh();
     return result;
+  }
+
+  void clearColor() {
+    _radiusColor = Colors.grey.withOpacity(0.5);
+  }
+
+  void changeColor(CompareType compareType) {
+    switch (compareType) {
+      case CompareType.less:
+        _radiusColor = Colors.green.withOpacity(0.5);
+        break;
+      case CompareType.mix:
+      case CompareType.same:
+        break;
+      case CompareType.more:
+        _radiusColor = Colors.red.withOpacity(0.5);
+        break;
+    }
   }
 
   @override
@@ -85,7 +108,7 @@ class _DraggableButtonState extends State<DraggableButton>
         waterRadius: _radius,
         animation: _animation,
         count: 5,
-        color: color,
+        color: _radiusColor,
         child: Container(
           width: size,
           height: size,
@@ -106,7 +129,11 @@ class _DraggableButtonState extends State<DraggableButton>
                   decoration: BoxDecoration(
                       shape: BoxShape.circle,
                       border: Border.all(color: Colors.white, width: 2)),
-                  child: Icon(Icons.bug_report_outlined, size: iconSize, color: Colors.white,),
+                  child: Icon(
+                    Icons.bug_report_outlined,
+                    size: iconSize,
+                    color: Colors.white,
+                  ),
                 ),
               )
             ],

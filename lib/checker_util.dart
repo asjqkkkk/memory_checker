@@ -9,9 +9,10 @@ import 'dart:developer';
 import 'iso_pool.dart';
 import 'ui/all.dart';
 
-void doCheck(Route<dynamic> route, Route<dynamic> previousRoute,
+Future doCheck(Route<dynamic> route, Route<dynamic> previousRoute,
     NavigatorState navigator,
-    {Set<TargetWidget> extraCheckTargets, Set<TargetWidget> filterCheckTargets}) {
+    {Set<TargetWidget> extraCheckTargets,
+    Set<TargetWidget> filterCheckTargets}) async {
   if (!canCheckMemory) return;
   String pageName = '';
   String extraWidgetName = '';
@@ -51,38 +52,34 @@ void doCheck(Route<dynamic> route, Route<dynamic> previousRoute,
   final extraTargets = extraCheckTargets ?? {};
   extraTargets.add(TargetWidget(checkName, isStateful: isStateful));
 
-  IsoUtil()
-      .startCheckWithNotify(pageName, isStateful, extraTargets: extraTargets)
-      .then((value) {
-    final util = OverlayUtil.getInstance();
-    final controller = FutureController();
-    _waterController ??= FutureController();
-    util.show(
-        showWidget: ScaleAniWidget(
-          futureController: controller,
-          child: DraggableButton(
-            futureController: _waterController,
-            onTap: () async {
-              await controller.onCall();
-              util.hide();
-              canCheckMemory = false;
-              Navigator.of(context)
-                  .push(MaterialPageRoute(
-                      builder: (ctx) => LeakListPage()))
-                  .then((value) {
-                util.reshow(overlay);
-                canCheckMemory = true;
-              });
-            },
-          ),
+  final result = await IsoUtil()
+      .startCheckWithNotify(pageName, isStateful, extraTargets: extraTargets);
+  final util = OverlayUtil.getInstance();
+  final controller = FutureController();
+  _waterController ??= FutureParamController<CompareType>();
+  util.show(
+      showWidget: ScaleAniWidget(
+        futureController: controller,
+        child: DraggableButton<CompareType>(
+          futureController: _waterController,
+          onTap: () async {
+            await controller.onCall();
+            util.hide();
+            canCheckMemory = false;
+            Navigator.of(context)
+                .push(MaterialPageRoute(builder: (ctx) => LeakListPage()))
+                .then((value) {
+              util.reshow(overlay);
+            });
+          },
         ),
-        overlayState: overlay);
-    if (value.needRefresh) _waterController.onCall();
-  });
+      ),
+      overlayState: overlay);
+  _waterController.onCall(result.compareType);
 }
 
 String _mainIsoRef;
-FutureController _waterController;
+FutureParamController<CompareType> _waterController;
 TargetInfo _targetInfo;
 bool canCheckMemory = true;
 
@@ -96,8 +93,8 @@ class IsoUtil {
   IsoUtil._internal();
 
   Future<ResultInfo> startCheck() async {
-    final result = await IsoPool()
-        .start(checkMemory, CheckInfo(_targetInfo._targetMap));
+    final result =
+        await IsoPool().start(checkMemory, CheckInfo(_targetInfo._targetMap));
     _mainIsoRef = result.mainIsoId;
     return result;
   }
@@ -108,19 +105,24 @@ class IsoUtil {
     extraTargets.forEach((element) {
       targetMap[element.targetName] = element;
     });
-    if (_targetInfo == null) _targetInfo = TargetInfo(targetMap);
-    targetMap.forEach((key, value) {
+    if (_targetInfo == null) _targetInfo = TargetInfo(targetMap, {});
+    _targetInfo._targetMap.forEach((key, value) {
       final oldEle = _targetInfo._targetMap[key];
-      if(oldEle != null) targetMap[key] = oldEle;
+      if (oldEle != null) targetMap[key] = oldEle;
     });
-    final result =
-        await IsoPool().start(checkWithNotify, CheckNotifyInfo(targetMap));
+    final result = await IsoPool().start(
+        checkWithNotify, CheckNotifyInfo(targetMap, _targetInfo._compareMap));
     result.targetMap.forEach((key, value) {
       _targetInfo._targetMap[key] = value;
+    });
+    result.compareMap.forEach((key, value) {
+      _targetInfo._compareMap[key] = value;
     });
     return result;
   }
 }
+
+enum CompareType { less, same, more, mix }
 
 Future<ResultInfo> checkMemory(CheckInfo checkInfo) async {
   final vmService = await getService();
@@ -149,7 +151,6 @@ Future<ResultInfo> checkMemory(CheckInfo checkInfo) async {
 
   final MemoryInfo memoryInfo = await getLeakObjects(targetClasses, vmInfo);
 
-
   final result = ResultInfo(memoryInfo, mainIsoRef.id);
 
   return result;
@@ -166,21 +167,40 @@ Future<NotifyResult> checkWithNotify(CheckNotifyInfo checkNotifyInfo) async {
   final allocationProfile =
       await vmService.getAllocationProfile(mainIsoRef.id, gc: true);
   final Map<String, TargetWidget> targetMap = Map.of(checkNotifyInfo.targetMap);
-
-  bool needRefresh = false;
+  final Map<String, TargetWidget> compareMap =
+      Map.of(checkNotifyInfo.compareMap);
+  final stateSet = targetMap.keys.map((e) => '_${e}State').toSet();
+  CompareType compareType = CompareType.same;
+  int sum = 0;
   for (final mem in allocationProfile.members) {
     final name = mem.classRef.name;
     final count = mem.instancesCurrent;
-    if (targetMap[name] != null) {
-      final cur = targetMap[name];
-      if (cur.existCount != count) {
-        needRefresh = true;
-        targetMap[name] = TargetWidget(cur.targetName,
-            isStateful: cur.isStateful, existCount: count);
+    final isState = stateSet.contains(name);
+    final isTarget = targetMap[name] != null;
+    if (isState) {
+      final cur = compareMap[name];
+      sum += (count - (cur?.existCount ?? 0));
+      if (cur?.existCount != count) {
+        final tw = TargetWidget(name,
+            isStateful: cur?.isStateful ?? true, existCount: count);
+        compareMap[name] = tw;
       }
     }
+    if (isTarget) {
+      final cur = targetMap[name];
+      sum += (count - cur.existCount);
+      if (cur.existCount != count) {
+        final tw = TargetWidget(cur.targetName,
+            isStateful: cur.isStateful, existCount: count);
+        targetMap[name] = tw;
+      }
+      compareMap[name] = targetMap[name];
+    }
   }
-  return NotifyResult(needRefresh, targetMap);
+  if (sum > 0)
+    compareType = CompareType.more;
+  else if (sum < 0) compareType = CompareType.less;
+  return NotifyResult(compareType, targetMap, compareMap);
 }
 
 Map<String, TargetWidget> getAllocatedIns(
@@ -195,9 +215,8 @@ Map<String, TargetWidget> getAllocatedIns(
       if (cur != null && count > 0) {
         resultMap[name] = TargetWidget(cur.targetName,
             isStateful: cur.isStateful, existCount: count);
-        }
       }
-    );
+    });
   return resultMap;
 }
 
@@ -258,7 +277,7 @@ Future<List<LeakTarget>> traverseLibs(
       final isTargetPage = obj.name == curWidget?.targetName;
       final isTarget = isState || isTargetPage || needCheck;
       LeakTarget tar = LeakTarget(isState, obj);
-      if(isState && obj.subclasses.isNotEmpty){
+      if (isState && obj.subclasses.isNotEmpty) {
         final subClass = obj.subclasses.first;
         final tarClass = await service.getObject(iso.id, subClass.id);
         tar = LeakTarget(isState, tarClass);
@@ -295,14 +314,12 @@ Future<MemoryInfo> getLeakObjects(
   return memoryInfo;
 }
 
-Future<vs.InstanceSet> getInstances(
-    ObjectInfo objectInfo) async {
+Future<vs.InstanceSet> getInstances(ObjectInfo objectInfo) async {
   objectInfo.mainIsoRef = _mainIsoRef;
   return await IsoPool().start(_getInstances, objectInfo);
 }
 
-Future<vs.InstanceSet> _getInstances(
-    ObjectInfo objectInfo) async {
+Future<vs.InstanceSet> _getInstances(ObjectInfo objectInfo) async {
   final service = await getService();
   final isoId = objectInfo.mainIsoRef;
   return await service.getInstances(
@@ -317,12 +334,11 @@ class ObjectInfo {
   ObjectInfo(this.targetId, {this.limit = 1});
 }
 
-class RetainingObjInfo{
+class RetainingObjInfo {
   final vs.RetainingObject retainingObject;
   String mainIsoRef;
   RetainingObjInfo(this.retainingObject);
 }
-
 
 class AnalyzeObjectInfo {
   final vs.Obj obj;
@@ -330,40 +346,36 @@ class AnalyzeObjectInfo {
   AnalyzeObjectInfo(this.obj);
 }
 
-Future<vs.Obj> getTargetObj(ObjectInfo objectInfo) async{
+Future<vs.Obj> getTargetObj(ObjectInfo objectInfo) async {
   objectInfo.mainIsoRef = _mainIsoRef;
   return await IsoPool().start(_getTargetObj, objectInfo);
 }
 
-Future<vs.Obj> _getTargetObj(ObjectInfo objectInfo) async{
+Future<vs.Obj> _getTargetObj(ObjectInfo objectInfo) async {
   final service = await getService();
   final isoId = objectInfo.mainIsoRef;
   final result = await service.getObject(isoId, objectInfo.targetId);
   return result;
 }
 
-Future<vs.RetainingPath> getRetainingPath(
-    ObjectInfo retainingInfo) async {
+Future<vs.RetainingPath> getRetainingPath(ObjectInfo retainingInfo) async {
   retainingInfo.mainIsoRef = _mainIsoRef;
   return await IsoPool().start(_getRetainingPath, retainingInfo);
 }
 
-Future<vs.RetainingPath> _getRetainingPath(
-    ObjectInfo retainingInfo) async {
+Future<vs.RetainingPath> _getRetainingPath(ObjectInfo retainingInfo) async {
   final service = await getService();
   final isoId = retainingInfo.mainIsoRef;
   return await service.getRetainingPath(
       isoId, retainingInfo.targetId, retainingInfo.limit);
 }
 
-Future<vs.Obj> transRetainInfo(
-    RetainingObjInfo retainingObjInfo) async {
+Future<vs.Obj> transRetainInfo(RetainingObjInfo retainingObjInfo) async {
   retainingObjInfo.mainIsoRef = _mainIsoRef;
   return await IsoPool().start(_transformRetainObj, retainingObjInfo);
 }
 
-
-Future<vs.Obj> _transformRetainObj(RetainingObjInfo retainingObjInfo) async{
+Future<vs.Obj> _transformRetainObj(RetainingObjInfo retainingObjInfo) async {
   final service = await getService();
   final isoId = retainingObjInfo.mainIsoRef;
   final retainObj = retainingObjInfo.retainingObject;
@@ -377,12 +389,12 @@ Future<vs.InboundReferences> getInboundReferences(String targetId,
   return service.getInboundReferences(isoId, targetId, limit);
 }
 
-Future<DetailInfo> analyzeObjInfo(AnalyzeObjectInfo obj) async{
+Future<DetailInfo> analyzeObjInfo(AnalyzeObjectInfo obj) async {
   obj.mainIsoRef = _mainIsoRef;
   return await IsoPool().start(_analyzeObjInfo, obj);
 }
 
-Future<DetailInfo> _analyzeObjInfo(AnalyzeObjectInfo objectInfo) async{
+Future<DetailInfo> _analyzeObjInfo(AnalyzeObjectInfo objectInfo) async {
   final isoId = objectInfo.mainIsoRef;
   final obj = objectInfo.obj;
   DetailInfo detailInfo = DetailInfo(obj.id);
@@ -433,18 +445,19 @@ Future<DetailInfo> _analyzeObjInfo(AnalyzeObjectInfo objectInfo) async{
           final finalString = dec.isFinal ? 'final ' : '';
 
           final typeString = (dec.declaredType.typeClass?.name ??
-              dec.declaredType.classRef.name) +
+                  dec.declaredType.classRef.name) +
               ' ';
           final nameString = dec.name.toString() + ' ';
           String valueString = '';
-          if (field.value == null){
+          if (field.value == null) {
             valueString = '= null';
           } else {
             if (field.value is vs.InstanceRef) {
               final value = field.value as vs.InstanceRef;
               valueString = value.valueAsString ?? value.classRef.name;
               valueString = '= $valueString';
-              if(!filterSet.contains(value.kind)) dlInfo = DetailInfo(value.id);
+              if (!filterSet.contains(value.kind))
+                dlInfo = DetailInfo(value.id);
             } else
               valueString = field.value.runtimeType.toString();
           }
@@ -465,10 +478,13 @@ Future<DetailInfo> _analyzeObjInfo(AnalyzeObjectInfo objectInfo) async{
             final name = element.classRef.name;
             spanInfoList.add(SpanInfo(name, defaultStyle));
             dlInfo = DetailInfo(element.id);
-          } else spanInfoList.add(SpanInfo(element.runtimeType.toString(), errorStyle));
+          } else
+            spanInfoList
+                .add(SpanInfo(element.runtimeType.toString(), errorStyle));
           detailInfo.children.add(SpanWithDetail(spanInfoList, dlInfo));
           if (i >= 10) {
-            spanInfoList.add(SpanInfo('Only support to show 10 items', errorStyle));
+            spanInfoList
+                .add(SpanInfo('Only support to show 10 items', errorStyle));
             break;
           }
         }
@@ -481,9 +497,11 @@ Future<DetailInfo> _analyzeObjInfo(AnalyzeObjectInfo objectInfo) async{
       final List<SpanInfo> spanInfoList = [];
       final service = await getService();
       final location = func.location;
-      final vs.Script script = await service.getObject(isoId, location.script.id);
+      final vs.Script script =
+          await service.getObject(isoId, location.script.id);
       final closureName = func.code.name.replaceAll('[Unoptimized]', '');
-      final source = script.source.substring(location.tokenPos, location.endTokenPos);
+      final source =
+          script.source.substring(location.tokenPos, location.endTokenPos);
       spanInfoList.add(SpanInfo('function = $closureName', defaultStyle));
       spanInfoList.add(SpanInfo('code :', blueStyle));
       spanInfoList.add(SpanInfo(source, defaultStyle));
@@ -492,12 +510,12 @@ Future<DetailInfo> _analyzeObjInfo(AnalyzeObjectInfo objectInfo) async{
     default:
       final errorText = 'UnCatch Object Type :${obj.toString()}';
       debugPrint(errorText);
-      detailInfo.children.add(SpanWithDetail([SpanInfo(errorText, errorStyle)], DetailInfo(null)));
+      detailInfo.children.add(
+          SpanWithDetail([SpanInfo(errorText, errorStyle)], DetailInfo(null)));
       break;
   }
   return detailInfo;
 }
-
 
 class MemoryInfo {
   final Map<String, LeakInfo> leakMaps;
@@ -536,7 +554,6 @@ class LeakInfo {
   LeakInfo(this.instanceObj, this.claObj);
 
   bool get hasInstance => (instanceObj?.totalCount ?? 0) > 0;
-
 }
 
 class CheckInfo {
@@ -547,15 +564,17 @@ class CheckInfo {
 
 class CheckNotifyInfo {
   final Map<String, TargetWidget> targetMap;
+  final Map<String, TargetWidget> compareMap;
 
-  CheckNotifyInfo(this.targetMap);
+  CheckNotifyInfo(this.targetMap, this.compareMap);
 }
 
 class NotifyResult {
-  final bool needRefresh;
+  final CompareType compareType;
   final Map<String, TargetWidget> targetMap;
+  final Map<String, TargetWidget> compareMap;
 
-  NotifyResult(this.needRefresh, this.targetMap);
+  NotifyResult(this.compareType, this.targetMap, this.compareMap);
 }
 
 class TargetWidget {
@@ -581,8 +600,9 @@ class TargetWidget {
 
 class TargetInfo {
   final Map<String, TargetWidget> _targetMap;
+  final Map<String, TargetWidget> _compareMap;
 
-  TargetInfo(this._targetMap);
+  TargetInfo(this._targetMap, this._compareMap);
 }
 
 class LeakTarget {

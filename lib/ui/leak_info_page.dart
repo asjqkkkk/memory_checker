@@ -138,28 +138,37 @@ class _LeakInfoPageState extends State<LeakInfoPage>
   Future<Widget> getWidgetByObj(vs.Obj obj) async {
     final detailInfo = await analyzeObjInfo(AnalyzeObjectInfo(obj));
     final children = detailInfo.children;
-    if(children.isEmpty) return Center(child: Text('There is no more info.', style: errorStyle,));
+    if (children.isEmpty)
+      return Center(
+          child: Text(
+        'There is no more info.',
+        style: errorStyle,
+      ));
     return Column(
       children: List.generate(children.length, (index) {
         final cur = children[index];
         final targetId = cur.detailInfo?.targetId;
         final hasTarget = targetId != null;
-        return hasTarget ? CusExpansionTile(
-          title: buildTitle(cur.spanInfoList),
-          childrenPadding: EdgeInsets.zero,
-          dynamicChildren: () => [
-            Container(
-              padding: EdgeInsets.fromLTRB(10, 0, 0, 0),
-              alignment: Alignment.topLeft,
-              child: buildFutureBuilder(getTargetObjWidget(targetId)),
-            )
-          ],
-        ) : ListTile(title: buildTitle(cur.spanInfoList),);
+        return hasTarget
+            ? CusExpansionTile(
+                title: buildTitle(cur.spanInfoList),
+                childrenPadding: EdgeInsets.zero,
+                dynamicChildren: () => [
+                  Container(
+                    padding: EdgeInsets.fromLTRB(10, 0, 0, 0),
+                    alignment: Alignment.topLeft,
+                    child: buildFutureBuilder(getTargetObjWidget(targetId)),
+                  )
+                ],
+              )
+            : ListTile(
+                title: buildTitle(cur.spanInfoList),
+              );
       }),
     );
   }
 
-  Future<Widget> getTargetObjWidget(String targetId) async{
+  Future<Widget> getTargetObjWidget(String targetId) async {
     final obj = await getTargetObj(ObjectInfo(targetId));
     return await getWidgetByObj(obj);
   }

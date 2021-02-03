@@ -6,14 +6,16 @@ class PageTwo extends StatefulWidget {
 }
 
 class _PageTwoState extends State<PageTwo> {
-
   @override
   Widget build(BuildContext context) {
     _anotherTestForLeak._stateList.add(this);
     return Scaffold(
       appBar: AppBar(),
       body: Center(
-        child: Text('Another Test For Leak', style: TextStyle(fontSize: 18),),
+        child: Text(
+          'Another Test For Leak',
+          style: TextStyle(fontSize: 18),
+        ),
       ),
     );
   }
@@ -21,6 +23,6 @@ class _PageTwoState extends State<PageTwo> {
 
 AnotherTestForLeak _anotherTestForLeak = AnotherTestForLeak();
 
-class AnotherTestForLeak{
+class AnotherTestForLeak {
   Set<State> _stateList = {};
 }

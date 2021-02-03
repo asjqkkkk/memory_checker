@@ -6,7 +6,10 @@ class PageThree extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(),
       body: Center(
-        child: Text('This leak was caused by flutter, but it will be released finally', style: TextStyle(fontSize: 18),),
+        child: Text(
+          'This leak was caused by flutter, but it will be released finally',
+          style: TextStyle(fontSize: 18),
+        ),
       ),
     );
   }

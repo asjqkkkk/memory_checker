@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 class CusExpansionTile extends StatefulWidget {
-
   const CusExpansionTile({
     Key key,
     this.leading,
@@ -45,12 +44,11 @@ class CusExpansionTile extends StatefulWidget {
 }
 
 class _CusExpansionTileState extends State<CusExpansionTile> {
-
   bool hasOpened = false;
 
   @override
   void initState() {
-    if(widget.initiallyExpanded) hasOpened = true;
+    if (widget.initiallyExpanded) hasOpened = true;
     super.initState();
   }
 
@@ -62,9 +60,9 @@ class _CusExpansionTileState extends State<CusExpansionTile> {
       title: widget.title,
       subtitle: widget.subtitle,
       backgroundColor: widget.backgroundColor,
-      onExpansionChanged: (value){
+      onExpansionChanged: (value) {
         widget.onExpansionChanged?.call(value);
-        if(value && !hasOpened){
+        if (value && !hasOpened) {
           hasOpened = true;
           refresh();
         }
@@ -80,15 +78,14 @@ class _CusExpansionTileState extends State<CusExpansionTile> {
     );
   }
 
-  List<Widget> getChildren(){
-    final result =  hasOpened ? widget.dynamicChildren?.call() : <Widget>[];
+  List<Widget> getChildren() {
+    final result = hasOpened ? widget.dynamicChildren?.call() : <Widget>[];
     return result;
   }
 
-  void refresh(){
+  void refresh() {
     if (mounted) setState(() {});
   }
-
 }
 
 typedef ChildrenBuilder = List<Widget> Function();

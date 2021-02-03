@@ -4,7 +4,6 @@ import '../checker_util.dart';
 import 'leak_instance_page.dart';
 
 class LeakListPage extends StatefulWidget {
-
   const LeakListPage({Key key}) : super(key: key);
 
   @override
@@ -12,23 +11,19 @@ class LeakListPage extends StatefulWidget {
 }
 
 class _LeakListPageState extends State<LeakListPage> {
-
   MemoryInfo _memoryInfo;
-
 
   @override
   void initState() {
-    IsoUtil().startCheck().then((value){
+    IsoUtil().startCheck().then((value) {
       this._memoryInfo = value.memoryInfo;
       refresh();
     });
     super.initState();
   }
 
-
   @override
   Widget build(BuildContext context) {
-
     return Scaffold(
       appBar: AppBar(
         title: Text('Leak Instance List'),
@@ -37,8 +32,11 @@ class _LeakListPageState extends State<LeakListPage> {
     );
   }
 
-  Widget buildBody(){
-    if(_memoryInfo == null) return Center(child: CircularProgressIndicator(),);
+  Widget buildBody() {
+    if (_memoryInfo == null)
+      return Center(
+        child: CircularProgressIndicator(),
+      );
     final memoryList = _memoryInfo.leakMaps.keys.toList();
     return Container(
       child: ListView.builder(
@@ -52,14 +50,15 @@ class _LeakListPageState extends State<LeakListPage> {
     );
   }
 
-  void refresh(){
-    if(mounted) setState(() {});
+  void refresh() {
+    if (mounted) setState(() {});
   }
 
   Widget buildLeakItem(LeakInfo leakInfo, BuildContext context) {
     final leakCount = leakInfo.instanceObj.totalCount;
     final leakObjName = leakInfo.claObj.name;
-    final textStyle = Theme.of(context).textTheme.bodyText1.copyWith(fontSize: 18);
+    final textStyle =
+        Theme.of(context).textTheme.bodyText1.copyWith(fontSize: 18);
     return GestureDetector(
       onTap: () => pushLeakPage(context, leakInfo),
       child: Container(
@@ -68,7 +67,9 @@ class _LeakListPageState extends State<LeakListPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(height: 10,),
+              SizedBox(
+                height: 10,
+              ),
               Container(
                 child: Text('Page Leak:'),
                 margin: EdgeInsets.only(left: 10, right: 10),
@@ -78,31 +79,34 @@ class _LeakListPageState extends State<LeakListPage> {
                 padding: EdgeInsets.all(2),
                 decoration: BoxDecoration(
                     border: Border.all(),
-                    borderRadius: BorderRadius.circular(4)
-                ),
+                    borderRadius: BorderRadius.circular(4)),
                 child: Row(
                   children: [
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          RichText(text: TextSpan(
-                            text: 'Leak Object: ',
-                            style: textStyle,
-                            children: [
-                              TextSpan(text: leakObjName, style: TextStyle(color: Colors.blue))
-                            ]
-                          )),
+                          RichText(
+                              text: TextSpan(
+                                  text: 'Leak Object: ',
+                                  style: textStyle,
+                                  children: [
+                                TextSpan(
+                                    text: leakObjName,
+                                    style: TextStyle(color: Colors.blue))
+                              ])),
                           SizedBox(
                             height: 10,
                           ),
-                          RichText(text: TextSpan(
-                              text: 'Exist Count: ',
-                              style: textStyle,
-                              children: [
-                                TextSpan(text:'$leakCount', style: TextStyle(color: Colors.blue))
-                              ]
-                          )),
+                          RichText(
+                              text: TextSpan(
+                                  text: 'Exist Count: ',
+                                  style: textStyle,
+                                  children: [
+                                TextSpan(
+                                    text: '$leakCount',
+                                    style: TextStyle(color: Colors.blue))
+                              ])),
                         ],
                       ),
                     ),
@@ -139,9 +143,8 @@ class _LeakListPageState extends State<LeakListPage> {
                   margin: EdgeInsets.all(8),
                   padding: EdgeInsets.all(2),
                   decoration: BoxDecoration(
-                    border: Border.all(),
-                    borderRadius: BorderRadius.circular(4)
-                  ),
+                      border: Border.all(),
+                      borderRadius: BorderRadius.circular(4)),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -172,4 +175,3 @@ class _LeakListPageState extends State<LeakListPage> {
         builder: (ctx) => LeakInsList(leakInfo: leakInfo)));
   }
 }
-

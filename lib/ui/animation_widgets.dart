@@ -20,7 +20,6 @@ class WaterRipple extends StatelessWidget {
       this.waterRadius = 30})
       : super(key: key);
 
-
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
@@ -28,16 +27,12 @@ class WaterRipple extends StatelessWidget {
       builder: (context, child) {
         return CustomPaint(
           painter: WaterRipplePainter(animation.value,
-              count: count,
-              color: color,
-              waterRadius: waterRadius),
+              count: count, color: color, waterRadius: waterRadius),
           child: this.child ?? SizedBox(),
         );
       },
     );
   }
-
-
 }
 
 class WaterRipplePainter extends CustomPainter {
@@ -60,8 +55,8 @@ class WaterRipplePainter extends CustomPainter {
       final Color _color = color.withOpacity(opacity);
       _paint..color = _color;
       double _radius = (radius + waterRadius) * ((i + progress) / (count + 1));
-      canvas.drawCircle(
-          Offset(size.width / 2, size.height / 2), waterRadius == 0 ? 0 : _radius, _paint);
+      canvas.drawCircle(Offset(size.width / 2, size.height / 2),
+          waterRadius == 0 ? 0 : _radius, _paint);
     }
   }
 
@@ -131,11 +126,26 @@ class FutureController {
     return _futureCallback?.call();
   }
 
-  void setCallBack(AsyncCallback callback){
-    if(_futureCallback == null && callback != null) _futureCallback = callback;
+  void setCallBack(AsyncCallback callback) {
+    if (_futureCallback == null && callback != null) _futureCallback = callback;
+  }
+
+  void dispose() => this._futureCallback = null;
+}
+
+class FutureParamController<T> {
+  AsyncParamCallback<T> _futureCallback;
+
+  Future onCall(T t) async {
+    return _futureCallback?.call(t);
+  }
+
+  void setCallBack(AsyncParamCallback callback) {
+    if (_futureCallback == null && callback != null) _futureCallback = callback;
   }
 
   void dispose() => this._futureCallback = null;
 }
 
 typedef AsyncCallback = Future Function();
+typedef AsyncParamCallback<T> = Future Function(T t);
