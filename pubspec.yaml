@@ -1,6 +1,6 @@
 name: memory_checker
 description: To finder memory leak by Dart VM Service。Support for Windows/Linux/Android/iOS, not support for Web.
-version: 0.0.3
+version: 0.0.5
 verified publisher:
   - agedchen@gmail.com
 homepage: https://github.com/asjqkkkk/memory_checker
@@ -13,7 +13,7 @@ dependencies:
     sdk: flutter
 
   isolate: ^2.0.3
-  vm_service: ^6.0.2
+  vm_service: ^6.2.0
 
 dev_dependencies:
   flutter_test:
