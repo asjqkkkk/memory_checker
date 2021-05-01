@@ -23,7 +23,7 @@ class IsoPool {
       FutureOr<R> Function(P argument) function, argument) async {
     if (_isBalanceRunning)
       throw Exception('ISO pool is running, do not start again');
-    _loadBalance = await LoadBalancer.create(2, IsolateRunner.spawn);
+    _loadBalance ??= await LoadBalancer.create(2, IsolateRunner.spawn);
     final res = await _loadBalance.run<R, P>(function, argument);
     _isBalanceRunning = true;
     return res;

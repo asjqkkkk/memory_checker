@@ -1,4 +1,5 @@
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:vm_service/utils.dart';
 import 'package:vm_service/vm_service.dart' as vs;
@@ -224,7 +225,9 @@ Future<vs.VmService> getService() async {
   final info = await Service.getInfo();
   final serverUri = info.serverUri;
   final url = convertToWebSocketUrl(serviceProtocolUrl: serverUri);
-  final service = await vmServiceConnectUri(url.toString());
+  final uri = url.replace(host: '10.0.2.2').toString();
+  final isAndroid = defaultTargetPlatform == TargetPlatform.android;
+  final service = await vmServiceConnectUri(isAndroid ? uri : url.toString());
   return service;
 }
 
